@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+
+	<springProperty scope="context" name="applicationName" source="spring.application.name" defaultValue="agent.entrance"/>
+	<property name="LOG_PATH" value="${LOG_PATH:-/opt/microservice/log/agent-entrance}"/>
+	<property name="LOG_FILE" value="${LOG_FILE:-${LOG_PATH}/${applicationName}.json.log}"/>
+
+	<appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+		<encoder class="com.yann.agent.entrance.support.FlatJsonLogEncoder"/>
+	</appender>
+
+	<springProfile name="!file">
+		<root level="INFO">
+			<appender-ref ref="JSON_CONSOLE"/>
+		</root>
+	</springProfile>
+
+	<springProfile name="file">
+		<appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+			<file>${LOG_FILE}</file>
+			<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+				<fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
+				<maxFileSize>100MB</maxFileSize>
+				<maxHistory>30</maxHistory>
+				<totalSizeCap>3GB</totalSizeCap>
+			</rollingPolicy>
+			<encoder class="com.yann.agent.entrance.support.FlatJsonLogEncoder"/>
+		</appender>
+
+		<root level="INFO">
+			<appender-ref ref="JSON_FILE"/>
+		</root>
+	</springProfile>
+</configuration>
