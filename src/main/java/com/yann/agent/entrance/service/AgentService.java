@@ -28,7 +28,7 @@ public class AgentService {
 				"dev-assistant",
 				"开发助手",
 				"默认 SSE Agent",
-				URI.create("http://localhost:9090/agent/stream"),
+				URI.create("http://localhost:8080/test/v1/chat"),
 				AgentStatus.ENABLED,
 				AgentProtocol.SSE
 		));
