@@ -88,9 +88,35 @@ public class AgentProxyService {
 
 		Flux<ServerSentEvent<StreamEvent>> start = Flux.just(toSse("message_start", StreamEvent.messageStart(assistantMessageId)));
 		Flux<ServerSentEvent<StreamEvent>> stream = adapter.stream(invokeRequest)
-				.filter(chunk -> StringUtils.hasText(chunk.text()))
-				.doOnNext(chunk -> assistantContent.append(chunk.text()))
-				.map(chunk -> toSse("delta", StreamEvent.delta(chunk.text())))
+				.concatMap(chunk -> switch (chunk.event()) {
+					case "message_start" -> Flux.empty();
+					case "delta" -> {
+						if (StringUtils.hasText(chunk.text())) {
+							assistantContent.append(chunk.text());
+							yield Flux.just(toSse("delta", StreamEvent.delta(chunk.text())));
+						}
+						yield Flux.empty();
+					}
+					case "content_block" -> {
+						if (StringUtils.hasText(chunk.blockType())) {
+							assistantContent.append("[")
+									.append(chunk.blockType())
+									.append("]")
+									.append(chunk.blockTitle() == null ? "" : chunk.blockTitle());
+							yield Flux.just(toSse("content_block", StreamEvent.contentBlock(
+									chunk.blockType(),
+									chunk.blockTitle(),
+									chunk.blockFormat(),
+									chunk.blockPayload()
+							)));
+						}
+						yield Flux.empty();
+					}
+					case "message_end" -> Flux.empty();
+					default -> StringUtils.hasText(chunk.rawPayload())
+							? Flux.just(toSse("delta", StreamEvent.delta(chunk.rawPayload())))
+							: Flux.empty();
+				})
 				.concatWith(Flux.defer(() -> {
 					terminalSaved.set(true);
 					conversationService.saveAssistantMessage(

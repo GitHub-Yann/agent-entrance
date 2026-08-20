@@ -42,6 +42,7 @@
 		}
 
 		input,
+		select,
 		textarea,
 		button {
 			box-sizing: border-box;
@@ -50,6 +51,7 @@
 		}
 
 		input,
+		select,
 		textarea {
 			border: 1px solid #c9d1df;
 			border-radius: 6px;
@@ -110,9 +112,14 @@
 			margin: 0 0 14px;
 			padding: 12px 14px;
 			border-radius: 8px;
-			white-space: pre-wrap;
 			line-height: 1.55;
 			border: 1px solid transparent;
+		}
+
+		.message-body {
+			display: flex;
+			flex-direction: column;
+			gap: 12px;
 		}
 
 		.user {
@@ -139,6 +146,68 @@
 			font-size: 12px;
 			max-height: 180px;
 			overflow: auto;
+		}
+
+		.stream-text {
+			white-space: pre-wrap;
+		}
+
+		.rich-block {
+			padding-top: 12px;
+			border-top: 1px solid #e2e8f0;
+		}
+
+		.rich-block-title {
+			display: block;
+			margin-bottom: 8px;
+			font-size: 14px;
+			font-weight: 700;
+			color: #334155;
+		}
+
+		.bar-chart {
+			display: flex;
+			align-items: end;
+			gap: 12px;
+			min-height: 190px;
+			padding: 12px 8px 0;
+			border-bottom: 1px solid #cbd5e1;
+		}
+
+		.bar-chart-item {
+			display: flex;
+			flex: 1;
+			min-width: 32px;
+			flex-direction: column;
+			align-items: center;
+			gap: 6px;
+		}
+
+		.bar-chart-value {
+			font-size: 12px;
+			color: #475569;
+		}
+
+		.bar-chart-bar {
+			width: min(42px, 100%);
+			min-height: 4px;
+			border-radius: 4px 4px 0 0;
+			background: #0f766e;
+		}
+
+		.bar-chart-label {
+			font-size: 12px;
+			color: #64748b;
+			white-space: nowrap;
+		}
+
+		.rich-html-frame {
+			display: block;
+			width: 100%;
+			height: 210px;
+			border: 1px solid #cbd5e1;
+			border-radius: 6px;
+			background: #ffffff;
 		}
 
 		@media (max-width: 760px) {
@@ -191,7 +260,10 @@
 	function appendMessage(role, text, extraClass = "") {
 		const node = document.createElement("div");
 		node.className = `message ${role} ${extraClass}`.trim();
-		node.textContent = text;
+		const body = document.createElement("div");
+		body.className = "message-body";
+		node.appendChild(body);
+		appendTextSegment(body, text);
 		messagesEl.appendChild(node);
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 		return node;
@@ -214,18 +286,14 @@
 		sendButton.disabled = true;
 
 		try {
-			const response = await fetch(`/api/conversations/${encodeURIComponent(conversationId)}/messages/stream`, {
+			const response = await fetch(requestUrl(conversationId), {
 				method: "POST",
 				headers: {
 					"Accept": "text/event-stream",
 					"Content-Type": "application/json",
 					...(token ? {"Authorization": token} : {})
 				},
-				body: JSON.stringify({
-					agentId,
-					message,
-					clientMessageId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
-				})
+				body: JSON.stringify(requestBody(agentId, message))
 			});
 
 			if (!response.ok || !response.body) {
@@ -241,6 +309,18 @@
 		} finally {
 			sendButton.disabled = false;
 		}
+	}
+
+	function requestUrl(conversationId) {
+		return `/api/conversations/${encodeURIComponent(conversationId)}/messages/stream`;
+	}
+
+	function requestBody(agentId, message) {
+		return {
+			agentId,
+			message,
+			clientMessageId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+		};
 	}
 
 	function normalizeToken(token) {
@@ -259,9 +339,9 @@
 			const {value, done} = await reader.read();
 			buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
 			let boundary;
-			while ((boundary = buffer.indexOf("\n\n")) >= 0) {
-				const block = buffer.slice(0, boundary);
-				buffer = buffer.slice(boundary + 2);
+			while ((boundary = findSseBoundary(buffer)) !== null) {
+				const block = buffer.slice(0, boundary.index);
+				buffer = buffer.slice(boundary.index + boundary.length);
 				const event = parseSseBlock(block);
 				if (event) {
 					onEvent(event);
@@ -277,6 +357,11 @@
 				break;
 			}
 		}
+	}
+
+	function findSseBoundary(buffer) {
+		const match = /\r?\n\r?\n/.exec(buffer);
+		return match ? {index: match.index, length: match[0].length} : null;
 	}
 
 	function parseSseBlock(block) {
@@ -309,8 +394,12 @@
 			return;
 		}
 		if (event === "delta") {
-			assistantNode.textContent += data.text || "";
+			appendStreamText(assistantNode, data.text || "");
 			messagesEl.scrollTop = messagesEl.scrollHeight;
+			return;
+		}
+		if (event === "content_block") {
+			appendContentBlock(assistantNode, data.block);
 			return;
 		}
 		if (event === "message_end") {
@@ -319,11 +408,106 @@
 		}
 		if (event === "error") {
 			assistantNode.classList.add("error");
-			assistantNode.textContent += `\n\n[${data.status}] ${data.reason}`;
+			appendStreamText(assistantNode, `\n\n[${data.status}] ${data.reason}`);
 			statusEl.textContent = "回复失败";
 			return;
 		}
 		appendMessage("raw", JSON.stringify({event, data}, null, 2), "raw");
+	}
+
+	function appendStreamText(assistantNode, text) {
+		const body = assistantNode.querySelector(".message-body");
+		if (!body) {
+			return;
+		}
+		const lastChild = body.lastElementChild;
+		if (lastChild && lastChild.classList.contains("stream-text")) {
+			lastChild.textContent += text;
+			return;
+		}
+		appendTextSegment(body, text);
+	}
+
+	function appendTextSegment(body, text) {
+		const textNode = document.createElement("div");
+		textNode.className = "stream-text";
+		textNode.textContent = text;
+		body.appendChild(textNode);
+	}
+
+	function appendContentBlock(assistantNode, block) {
+		if (!block || !block.type) {
+			appendMessage("raw", JSON.stringify(block, null, 2), "raw");
+			return;
+		}
+
+		const body = assistantNode.querySelector(".message-body");
+		if (!body) {
+			return;
+		}
+		const container = document.createElement("section");
+		container.className = "rich-block";
+		container.dataset.blockId = block.blockId || "";
+		if (block.title) {
+			const title = document.createElement("strong");
+			title.className = "rich-block-title";
+			title.textContent = block.title;
+			container.appendChild(title);
+		}
+
+		if (block.type === "chart" && block.format === "bar") {
+			container.appendChild(renderBarChart(block));
+		} else if (block.type === "html" && block.format === "sandbox_iframe") {
+			container.appendChild(renderSandboxHtml(block.payload || ""));
+		} else {
+			const fallback = document.createElement("pre");
+			fallback.className = "raw";
+			fallback.textContent = JSON.stringify(block, null, 2);
+			container.appendChild(fallback);
+		}
+
+		body.appendChild(container);
+		messagesEl.scrollTop = messagesEl.scrollHeight;
+	}
+
+	function renderBarChart(block) {
+		const payload = typeof block.payload === "string" ? JSON.parse(block.payload) : (block.payload || {});
+		const labels = Array.isArray(payload.labels) ? payload.labels : [];
+		const values = Array.isArray(payload.values) ? payload.values : [];
+		const maxValue = Math.max(...values, 1);
+		const chart = document.createElement("div");
+		chart.className = "bar-chart";
+
+		values.forEach((value, index) => {
+			const item = document.createElement("div");
+			item.className = "bar-chart-item";
+
+			const valueEl = document.createElement("span");
+			valueEl.className = "bar-chart-value";
+			valueEl.textContent = String(value);
+
+			const bar = document.createElement("div");
+			bar.className = "bar-chart-bar";
+			bar.style.height = `${Math.max((Number(value) / maxValue) * 140, 4)}px`;
+			bar.title = `${labels[index] || `第 ${index + 1} 项`}：${value}`;
+
+			const label = document.createElement("span");
+			label.className = "bar-chart-label";
+			label.textContent = labels[index] || `第 ${index + 1} 项`;
+
+			item.append(valueEl, bar, label);
+			chart.appendChild(item);
+		});
+		return chart;
+	}
+
+	function renderSandboxHtml(html) {
+		const frame = document.createElement("iframe");
+		frame.className = "rich-html-frame";
+		frame.setAttribute("sandbox", "");
+		frame.setAttribute("title", "Agent 富文本内容");
+		frame.srcdoc = html || "";
+		return frame;
 	}
 </script>
 </body>

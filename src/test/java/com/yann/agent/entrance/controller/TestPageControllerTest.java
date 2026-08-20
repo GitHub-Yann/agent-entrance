@@ -2,9 +2,11 @@ package com.yann.agent.entrance.controller;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.Resource;
+import org.springframework.http.codec.ServerSentEvent;
 import reactor.test.StepVerifier;
 
 import java.time.Duration;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,19 +27,31 @@ class TestPageControllerTest {
 		StepVerifier.withVirtualTime(controller::mockTargetAgentChat)
 				.expectSubscription()
 				.thenAwait(Duration.ofSeconds(5))
-				.expectNextMatches(TestPageControllerTest::isRandomNumber)
-				.expectNextMatches(TestPageControllerTest::isRandomNumber)
-				.expectNextMatches(TestPageControllerTest::isRandomNumber)
-				.expectNextMatches(TestPageControllerTest::isRandomNumber)
-				.expectNextMatches(TestPageControllerTest::isRandomNumber)
+				.expectNextMatches(event -> "message_start".equals(event.event()))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> "message_end".equals(event.event()))
 				.verifyComplete();
 	}
 
-	private static boolean isRandomNumber(String value) {
-		if (value == null || value.isBlank()) {
-			return false;
-		}
-		int number = Integer.parseInt(value);
-		return number >= 0 && number < 1000;
+	@Test
+	void mockTargetAgentRichChatDelegatesToMixedResponse() {
+		StepVerifier.withVirtualTime(new TestPageController()::mockTargetAgentRichChat)
+				.expectSubscription()
+				.thenAwait(Duration.ofSeconds(5))
+				.expectNextMatches(event -> "message_start".equals(event.event()))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> isPayloadEvent(event))
+				.expectNextMatches(event -> "message_end".equals(event.event()))
+				.verifyComplete();
+	}
+
+	private static boolean isPayloadEvent(ServerSentEvent<Map<String, Object>> event) {
+		return "delta".equals(event.event())
+				|| "content_block".equals(event.event());
 	}
 }
