@@ -2,6 +2,7 @@ package com.yann.agent.entrance.adapter;
 
 import com.yann.agent.entrance.dto.AgentInvokeRequest;
 import com.yann.agent.entrance.dto.AgentStreamChunk;
+import com.yann.agent.entrance.dto.TargetAgentRequestBody;
 import com.yann.agent.entrance.model.AgentProtocol;
 import com.yann.agent.entrance.support.JsonLog;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -35,16 +36,18 @@ public class HttpSseAgentAdapter implements AgentAdapter {
 	@Override
 	public Flux<AgentStreamChunk> stream(AgentInvokeRequest request) {
 		long startedAt = System.currentTimeMillis();
-		Map<String, String> body = Map.of(
-				"agentId", request.agentId(),
-				"tenantId", request.tenantId(),
-				"userId", request.userId(),
-				"conversationId", request.conversationId(),
-				"message", request.message()
+		TargetAgentRequestBody body = new TargetAgentRequestBody(
+				request.agentId(),
+				request.tenantId(),
+				request.userId(),
+				request.conversationId(),
+				request.message(),
+				request.attachments(),
+				request.clientMessageId()
 		);
 		JsonLog.info(log, "agent.adapter.sse.request.started",
 				"agentId", request.agentId(),
-				"correlation", request.correlation(),
+				"correlation", request.correlationId(),
 				"tenantId", request.tenantId(),
 				"userId", request.userId(),
 				"conversationId", request.conversationId(),
@@ -57,6 +60,9 @@ public class HttpSseAgentAdapter implements AgentAdapter {
 					if (request.accessToken() != null) {
 						headers.setBearerAuth(request.accessToken());
 					}
+					if (request.correlationId() != null) {
+						headers.set("x-correlation-id", request.correlationId());
+					}
 				})
 				.accept(MediaType.TEXT_EVENT_STREAM)
 				.contentType(MediaType.APPLICATION_JSON)
@@ -64,7 +70,7 @@ public class HttpSseAgentAdapter implements AgentAdapter {
 				.exchangeToFlux(response -> {
 					JsonLog.info(log, "agent.adapter.sse.response.received",
 							"agentId", request.agentId(),
-							"correlation", request.correlation(),
+							"correlation", request.correlationId(),
 							"conversationId", request.conversationId(),
 							"endpoint", request.endpoint(),
 							"statusCode", response.statusCode().value()
@@ -77,14 +83,14 @@ public class HttpSseAgentAdapter implements AgentAdapter {
 				.flatMap(this::parseChunk)
 				.doOnError(ex -> JsonLog.error(log, "agent.adapter.sse.request.failed", ex,
 						"agentId", request.agentId(),
-						"correlation", request.correlation(),
+						"correlation", request.correlationId(),
 						"conversationId", request.conversationId(),
 						"endpoint", request.endpoint(),
 						"durationMs", elapsedSince(startedAt)
 				))
 				.doOnComplete(() -> JsonLog.info(log, "agent.adapter.sse.request.completed",
 						"agentId", request.agentId(),
-						"correlation", request.correlation(),
+						"correlation", request.correlationId(),
 						"conversationId", request.conversationId(),
 						"endpoint", request.endpoint(),
 						"durationMs", elapsedSince(startedAt)

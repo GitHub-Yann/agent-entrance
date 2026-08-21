@@ -17,6 +17,7 @@ import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.SignalType;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -71,7 +72,7 @@ public class AgentProxyService {
 		);
 		auditService.recordAccess(user, agent);
 
-		String assistantMessageId = conversationService.nextId();
+		String assistantMessageId = resolveClientMessageId(conversationId, request.clientMessageId());
 		StringBuilder assistantContent = new StringBuilder();
 		AtomicBoolean terminalSaved = new AtomicBoolean(false);
 		AgentAdapter adapter = selectAdapter(agent);
@@ -82,8 +83,10 @@ public class AgentProxyService {
 				conversationId,
 				user.accessToken(),
 				request.message().trim(),
-				agent.endpoint(),
-				user.correlation()
+				Collections.emptyList(),
+				user.correlation(),
+				assistantMessageId,
+				agent.endpoint()
 		);
 
 		Flux<ServerSentEvent<StreamEvent>> start = Flux.just(toSse("message_start", StreamEvent.messageStart(assistantMessageId)));
@@ -177,6 +180,13 @@ public class AgentProxyService {
 		if (!StringUtils.hasText(request.message())) {
 			throw new ResponseStatusException(BAD_REQUEST, "MESSAGE_REQUIRED");
 		}
+	}
+
+	private String resolveClientMessageId(String conversationId, String clientMessageId) {
+		if (StringUtils.hasText(clientMessageId)) {
+			return clientMessageId.trim();
+		}
+		return conversationService.nextClientMessageId(conversationId);
 	}
 
 	private AgentAdapter selectAdapter(Agent agent) {

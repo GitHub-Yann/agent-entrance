@@ -2,17 +2,15 @@ package com.yann.agent.entrance.adapter;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yann.agent.entrance.dto.AgentInvokeRequest;
-import com.yann.agent.entrance.dto.AgentStreamChunk;
-import com.yann.agent.entrance.model.AgentProtocol;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Flux;
 import reactor.test.StepVerifier;
 
 import java.net.URI;
-import java.util.Map;
+import java.util.Collections;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,7 +18,9 @@ class HttpSseAgentAdapterTest {
 
 	@Test
 	void parsesTextAndContentBlocksFromSse() {
+		AtomicReference<String> correlationHeader = new AtomicReference<>();
 		WebClient.Builder builder = WebClient.builder().exchangeFunction(request -> {
+			correlationHeader.set(request.headers().getFirst("x-correlation-id"));
 			String body = """
 					event: message_start
 					data: {"messageId":"m-1"}
@@ -50,8 +50,10 @@ class HttpSseAgentAdapterTest {
 				"c-1",
 				null,
 				"hi",
-				URI.create("http://localhost/mock"),
-				"corr-1"
+				Collections.emptyList(),
+				"corr-1",
+				"c-1-1",
+				URI.create("http://localhost/mock")
 		);
 
 		StepVerifier.create(adapter.stream(request))
@@ -66,5 +68,7 @@ class HttpSseAgentAdapterTest {
 				})
 				.assertNext(chunk -> assertThat(chunk.event()).isEqualTo("message_end"))
 				.verifyComplete();
+
+		assertThat(correlationHeader).hasValue("corr-1");
 	}
 }

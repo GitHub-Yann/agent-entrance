@@ -8,13 +8,16 @@ import org.springframework.stereotype.Service;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class ConversationService {
 
 	private final Clock clock;
 	private final List<StoredMessage> messages = new CopyOnWriteArrayList<>();
+	private final ConcurrentHashMap<String, AtomicInteger> clientMessageSequences = new ConcurrentHashMap<>();
 
 	public ConversationService(Clock clock) {
 		this.clock = clock;
@@ -52,6 +55,13 @@ public class ConversationService {
 
 	public String nextId() {
 		return "m-" + UUID.randomUUID();
+	}
+
+	public String nextClientMessageId(String conversationId) {
+		int sequence = clientMessageSequences
+				.computeIfAbsent(conversationId, key -> new AtomicInteger())
+				.incrementAndGet();
+		return conversationId + "-" + sequence;
 	}
 }
 

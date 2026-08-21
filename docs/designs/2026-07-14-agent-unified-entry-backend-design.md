@@ -274,7 +274,7 @@ Cookie: SSO 登录态
   "agentId": "dev-assistant",
   "message": "请结合附件内容分析这个接口设计",
   "attachmentIds": ["att-001", "att-002"],
-  "clientMessageId": "optional-client-id"
+  "clientMessageId": "c-001-1"
 }
 ```
 
@@ -293,21 +293,21 @@ Cookie: SSO 登录态
 
 本节定义的是统一 Agent 前端与统一 Agent 后端之间的 SSE 事件契约，也是前端联调和后端测试用例共同遵循的外层协议。目标 Agent 不需要直接实现这些事件；统一入口后端可以适配不同目标 Agent 协议，但对前端暴露的 SSE 事件必须保持稳定。
 
-本期前端仅按纯文本或 Markdown 渲染 `delta.text`，可交互图表、MCP Apps、A2UI 或组件化富文本输出作为后续受控内容块协议扩展。
+本期前端按事件顺序渲染 `delta.text` 和受控富文本内容块。目标 Agent 返回的图表、HTML 等富文本内容先由 Adapter 归一化为 `content_block`，再由统一入口后端封装成统一 Agent 前端可消费的 SSE 事件。
 
 #### ID 约定
 
 | ID | 生成方 | 生成时机 | 格式 | 作用 |
 |---|---|---|---|---|
 | `conversationId` | 统一入口后端 | 用户点击“新建会话”时 | `c-` + UUID | 标识一次业务会话，贯穿会话保存、查询、导出和删除 |
-| `clientMessageId` | 前端 | 用户点击发送前 | `cm-` + UUID | 标识本次用户请求，用于前端本地气泡关联、重试幂等和日志排查 |
+| `clientMessageId` | 前端 | 用户点击发送前 | `conversationId` + `-` + 会话内递增序号，例如 `c-001-1` | 标识本次用户请求，用于前端本地气泡关联、重试幂等和日志排查 |
 | `correlationId` | 统一入口后端 | 统一入口收到一次请求时 | UUID | 标识一次请求链路，用于日志关联和请求头 `x-correlation-id` 透传 |
 
 说明：
 
 - `conversationId` 是业务会话级 ID，随请求体传入目标 Agent。
 - `clientMessageId` 是本次请求级 ID，随请求体传入目标 Agent，目标 Agent 可按需使用。
-- 统一入口返回给前端 SSE 事件中的 `messageId` 取自 `clientMessageId`；如果前端未传入 `clientMessageId`，统一入口生成一个 `cm-` 前缀 ID 后再封装到 SSE 响应中。
+- 统一入口返回给前端 SSE 事件中的 `messageId` 取自 `clientMessageId`；如果前端未传入 `clientMessageId`，统一入口按 `conversationId` + `-` + 会话内递增序号生成后再封装到 SSE 响应中，序号从 1 开始。
 - 如落库时需要区分用户消息和助手消息的内部主键，可另设存储层 ID；该内部 ID 不作为前端 SSE 的 `messageId`。
 - `correlationId` 是链路追踪 ID，统一入口在请求头中透传给目标 Agent，首期不用放入业务响应体。
 
@@ -320,7 +320,7 @@ Cookie: SSO 登录态
   "agentId": "dev-assistant",
   "message": "帮我分析这个接口设计",
   "attachmentIds": ["att-001", "att-002"],
-  "clientMessageId": "optional-client-id"
+  "clientMessageId": "c-001-1"
 }
 ```
 
@@ -347,7 +347,7 @@ Cookie: SSO 登录态
   "agentId": "dev-assistant",
   "message": "帮我分析这个接口设计",
   "attachmentIds": ["att-001", "att-002"],
-  "clientMessageId": "optional-client-id"
+  "clientMessageId": "c-001-1"
 }
 ```
 
@@ -355,23 +355,29 @@ SSE 返回示例：
 
 ```text
 event: message_start
-data: {"messageId":"cm-001"}
+data: {"messageId":"c-001-1"}
 
 event: delta
 data: {"text":"统一入口后端应先校验"}
 
+event: content_block
+data: {"block":{"type":"html","title":"本周订单量","format":"sandbox_iframe","payload":"<!doctype html><html lang=\"zh-CN\"><body><h3>本周订单量</h3><div>目标 Agent 生成的图表 HTML</div></body></html>"}}
+
 event: delta
 data: {"text":"租户授权和 Agent 状态"}
 
+event: content_block
+data: {"block":{"type":"html","title":"结论卡片","format":"sandbox_iframe","payload":"<!doctype html><html lang=\"zh-CN\"><body><h3>结论</h3></body></html>"}}
+
 event: message_end
-data: {"messageId":"cm-001","status":"SUCCESS"}
+data: {"messageId":"c-001-1","status":"SUCCESS"}
 ```
 
 失败事件：
 
 ```text
 event: error
-data: {"messageId":"cm-001","status":"FAILED","reason":"Agent stream interrupted"}
+data: {"messageId":"c-001-1","status":"FAILED","reason":"Agent stream interrupted"}
 ```
 
 Controller 返回类型：
@@ -382,12 +388,13 @@ Flux<ServerSentEvent<StreamEvent>>
 
 #### SSE 事件契约
 
-统一入口后端对前端只暴露以下事件类型。除 `delta` 承载目标 Agent 的可展示文本外，其余事件均是统一入口后端生成的控制事件。
+统一入口后端对前端只暴露以下事件类型。`delta` 承载目标 Agent 的可展示文本，`content_block` 承载目标 Agent 返回并经 Adapter 归一化后的富文本内容块，其余事件均是统一入口后端生成的控制事件。
 
 | 事件 | 触发时机 | data 字段 | 是否终止事件 | 前端处理 |
 |---|---|---|---|---|
 | `message_start` | 用户消息保存成功，准备连接目标 Agent 前 | `messageId` | 否 | 创建助手消息占位气泡 |
 | `delta` | 目标 Agent 返回一段可展示文本 | `text` | 否 | 追加到当前助手消息 |
+| `content_block` | 目标 Agent 返回图表、HTML 等富文本内容块 | `block` | 否 | 按 `block.type` 和 `block.format` 渲染为图表、iframe 等富文本内容 |
 | `message_end` | 目标 Agent 正常结束，助手完整回复保存成功 | `messageId`、`status` | 是 | 标记消息成功完成 |
 | `error` | 连接失败、目标 Agent 异常、保存失败或协议解析失败 | `messageId`、`status`、`code`、`reason` | 是 | 标记消息失败并展示可读提示 |
 | `stopped` | 用户主动停止或前端连接断开并被后端识别为取消 | `messageId`、`status`、`reason` | 是 | 标记消息已停止 |
@@ -398,9 +405,16 @@ Flux<ServerSentEvent<StreamEvent>>
 public record StreamEvent(
     String messageId,
     String text,
+    ContentBlock block,
     String status,
-    String code,
     String reason
+) {}
+
+public record ContentBlock(
+    String type,
+    String title,
+    String format,
+    String payload
 ) {}
 ```
 
@@ -408,10 +422,12 @@ public record StreamEvent(
 
 - `message_start` 必须先于任何 `delta`、`message_end`、`error` 或 `stopped` 返回。
 - `delta.text` 允许为空白以外的任意文本，不承载状态语义。
+- `content_block.block` 必须包含 `type`，`format` 和 `payload`；当前模拟目标 Agent 统一使用 `type=html`、`format=sandbox_iframe`，由目标 Agent 自己生成图表、表格、表单等完整 HTML。
+- `content_block` 与 `delta` 一样是非终止展示事件，前端必须按 SSE 到达顺序追加渲染，不能把后续 `delta` 合并回前面的文本节点导致顺序错乱。
 - `message_end`、`error`、`stopped` 三者互斥，同一次流式请求最多只出现一个。
 - 终止事件发出后，服务端必须完成 SSE 响应，不再发送新事件。
 - `reason` 是面向前端展示的简短原因，不包含下游响应体、堆栈、Token、对象存储地址等敏感信息。
-- `code` 是稳定错误码，前端使用 `code` 做分支，不解析 `reason`。
+- 错误码是稳定错误标识，前端使用错误码做分支，不解析 `reason`。当前测试代码的 `StreamEvent` 尚未显式建模 `code` 字段，正式实现需在错误事件中补齐。
 
 #### 流式顺序与状态机
 
@@ -635,14 +651,14 @@ public record TargetAgentRequestBody(
       "accessUrl": "https://bucket.example.com/tenant/t-001/conversation/c-001/design.pdf"
     }
   ],
-  "clientMessageId": "optional-client-id"
+  "clientMessageId": "c-001-1"
 }
 ```
 
 #### 响应体
 
 - 统一入口不向前端原样暴露目标 Agent 的原始协议事件。
-- 统一入口外层继续使用自身 SSE 事件包装；其中 `delta.text` 承载目标 Agent 生成的可展示文本，不额外改写目标 Agent 的业务语义。
+- 统一入口外层继续使用自身 SSE 事件包装；其中 `delta.text` 承载目标 Agent 生成的可展示文本，`content_block.block` 承载目标 Agent 生成的富文本内容块，不额外改写目标 Agent 的业务语义。
 - 统一入口必须按“前端 SSE 事件契约”输出稳定事件；目标 Agent 的原始事件名称、字段和错误结构由 Adapter 负责转换。
 - 超时、取消和错误码映射属于本期必备契约，默认值可配置。
 
@@ -655,6 +671,9 @@ public record TargetAgentRequestBody(
 | 目标 Agent 响应 | Adapter 处理 | 统一入口输出 |
 |---|---|---|
 | `data: {"text":"..."}` | 提取 `text` 字段作为可展示文本分片 | `delta` |
+| `event: delta` + `data: {"text":"..."}` | 提取 `text` 字段作为可展示文本分片 | `delta` |
+| `event: content_block` + `data: {"type":"html","title":"...","format":"sandbox_iframe","payload":"<!doctype html>..."}` | 归一化为 `AgentStreamChunk.contentBlock`，完整 HTML 放入 `blockPayload` | `content_block`，`data.block.type=html` |
+| `event: content_block` + `data: {"type":"html","title":"...","format":"sandbox_iframe","payload":"<!doctype html>..."}` | 归一化为 `AgentStreamChunk.contentBlock`，HTML 类 `payload` 提取为目标 Agent 返回的完整 HTML 字符串 | `content_block`，`data.block.type=html` |
 | SSE 流正常完成 | 解析为终止信号 | `message_end` |
 | 连接异常或响应无法解析 | 解析为下游错误或协议错误 | `error` |
 | 未知事件或无法解析内容 | 记录 `rawPayload` 并判定协议错误 | `error` |
@@ -663,6 +682,8 @@ public record TargetAgentRequestBody(
 
 - Adapter 负责把不同下游协议转换为 `AgentStreamChunk`，统一入口前端只看统一 SSE 事件。
 - `AgentStreamChunk.text` 用于承载可展示文本。
+- `AgentStreamChunk.blockType`、`blockTitle`、`blockFormat`、`blockPayload` 用于承载富文本内容块。
+- 统一入口对前端输出 `content_block` 时，必须将富文本内容块放在 `StreamEvent.block` 下；目标 Agent 响应中的顶层 `type/title/format/payload` 不直接作为统一前端响应的顶层字段。
 - `AgentStreamChunk.terminal=true` 表示下游已结束，`AgentProxyService` 据此发送 `message_end`。
 - `AgentStreamChunk.rawPayload` 用于保留原始下游内容，方便排障，不直接返回前端。
 - 下游返回结构不完整、字段缺失或事件语义不明确时，统一入口必须按协议错误处理，返回 `AGENT_PROTOCOL_ERROR`。
@@ -670,8 +691,16 @@ public record TargetAgentRequestBody(
 目标 Agent 首期 SSE 响应样例：
 
 ```text
+event: delta
 data: {"text":"统一入口后端应先校验"}
 
+event: content_block
+data: {"type":"html","title":"本周订单量","format":"sandbox_iframe","payload":"<!doctype html><html lang=\"zh-CN\"><body><h3>本周订单量</h3><div>目标 Agent 生成的图表 HTML</div></body></html>"}
+
+event: content_block
+data: {"type":"html","title":"结论卡片","format":"sandbox_iframe","payload":"<!doctype html><html lang=\"zh-CN\"><body><h3>结论</h3></body></html>"}
+
+event: delta
 data: {"text":"租户授权和 Agent 状态"}
 ```
 - 任何目标 Agent 私有事件名、字段名或错误格式都不允许直接透传给前端。
@@ -1148,7 +1177,7 @@ Cookie: agent_sso=...
   "agentId": "dev-assistant",
   "message": "请结合附件内容分析这个接口设计",
   "attachmentIds": ["att-001", "att-002"],
-  "clientMessageId": "cm-001"
+  "clientMessageId": "c-001-1"
 }
 ```
 
@@ -1159,26 +1188,32 @@ Cookie: agent_sso=...
 | `agentId` | 是 | 本次调用的目标 Agent |
 | `message` | 是 | 用户输入文本 |
 | `attachmentIds` | 否 | 已上传附件 ID 列表 |
-| `clientMessageId` | 否 | 前端生成的消息 ID，用于本地气泡关联和重试幂等 |
+| `clientMessageId` | 否 | 前端生成的消息 ID，格式为 `conversationId` + `-` + 会话内递增序号，用于本地气泡关联和重试幂等 |
 
 成功响应：
 
 ```text
 event: message_start
-data: {"messageId":"cm-001"}
+data: {"messageId":"c-001-1"}
 
 event: delta
 data: {"text":"统一入口后端应先校验附件归属"}
 
+event: content_block
+data: {"block":{"type":"html","title":"本周订单量","format":"sandbox_iframe","payload":"<!doctype html><html lang=\"zh-CN\"><body><h3>本周订单量</h3><div>目标 Agent 生成的图表 HTML</div></body></html>"}}
+
+event: content_block
+data: {"block":{"type":"html","title":"问候表单","format":"sandbox_iframe","payload":"<!doctype html><html lang=\"zh-CN\"><body><form><input name=\"name\"><button type=\"button\">提交</button></form></body></html>"}}
+
 event: message_end
-data: {"messageId":"cm-001","status":"SUCCESS"}
+data: {"messageId":"c-001-1","status":"SUCCESS"}
 ```
 
 失败事件：
 
 ```text
 event: error
-data: {"messageId":"cm-001","status":"FAILED","code":"AGENT_IDLE_TIMEOUT","reason":"目标 Agent 响应超时"}
+data: {"messageId":"c-001-1","status":"FAILED","code":"AGENT_IDLE_TIMEOUT","reason":"目标 Agent 响应超时"}
 ```
 
 规则：
@@ -1187,6 +1222,7 @@ data: {"messageId":"cm-001","status":"FAILED","code":"AGENT_IDLE_TIMEOUT","reaso
 - 流开始前的准入失败直接返回 HTTP 错误，不返回 SSE。
 - 用户消息保存成功后才发送 `message_start`。
 - 目标 Agent 返回的文本分片经 Adapter 转换后，以统一前端 SSE `delta` 事件输出。
+- 目标 Agent 返回的富文本内容块经 Adapter 转换后，以统一前端 SSE `content_block` 事件输出；前端按 `block.type` 和 `block.format` 决定渲染方式。
 - 目标 Agent 2 分钟内无业务响应时，统一入口取消下游调用并返回 `AGENT_IDLE_TIMEOUT`。
 - 流式结束、失败或停止时，统一入口保存完整或部分 Agent 回复。
 

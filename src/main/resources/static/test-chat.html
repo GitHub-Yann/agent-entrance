@@ -165,46 +165,10 @@
 			color: #334155;
 		}
 
-		.bar-chart {
-			display: flex;
-			align-items: end;
-			gap: 12px;
-			min-height: 190px;
-			padding: 12px 8px 0;
-			border-bottom: 1px solid #cbd5e1;
-		}
-
-		.bar-chart-item {
-			display: flex;
-			flex: 1;
-			min-width: 32px;
-			flex-direction: column;
-			align-items: center;
-			gap: 6px;
-		}
-
-		.bar-chart-value {
-			font-size: 12px;
-			color: #475569;
-		}
-
-		.bar-chart-bar {
-			width: min(42px, 100%);
-			min-height: 4px;
-			border-radius: 4px 4px 0 0;
-			background: #0f766e;
-		}
-
-		.bar-chart-label {
-			font-size: 12px;
-			color: #64748b;
-			white-space: nowrap;
-		}
-
 		.rich-html-frame {
 			display: block;
 			width: 100%;
-			height: 210px;
+			min-height: 120px;
 			border: 1px solid #cbd5e1;
 			border-radius: 6px;
 			background: #ffffff;
@@ -230,7 +194,7 @@
 		<input id="agentId" value="dev-assistant" autocomplete="off">
 
 		<label for="conversationId">Conversation ID</label>
-		<input id="conversationId" value="test-conversation" autocomplete="off">
+		<input id="conversationId" value="c-00000000-0000-0000-0000-000000000001" autocomplete="off">
 
 		<label for="token">JWT Token</label>
 		<textarea id="token" placeholder="粘贴 SSO JWT，可选 Bearer 前缀"></textarea>
@@ -254,6 +218,7 @@
 	const sendButton = document.querySelector("#sendButton");
 	const statusEl = document.querySelector("#status");
 	const messagesEl = document.querySelector("#messages");
+	const clientMessageSequences = new Map();
 
 	sendButton.addEventListener("click", sendMessage);
 
@@ -319,8 +284,15 @@
 		return {
 			agentId,
 			message,
-			clientMessageId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+			clientMessageId: nextClientMessageId(document.querySelector("#conversationId").value.trim())
 		};
+	}
+
+	function nextClientMessageId(conversationId) {
+		const current = clientMessageSequences.get(conversationId) || 0;
+		const next = current + 1;
+		clientMessageSequences.set(conversationId, next);
+		return `${conversationId}-${next}`;
 	}
 
 	function normalizeToken(token) {
@@ -455,9 +427,7 @@
 			container.appendChild(title);
 		}
 
-		if (block.type === "chart" && block.format === "bar") {
-			container.appendChild(renderBarChart(block));
-		} else if (block.type === "html" && block.format === "sandbox_iframe") {
+		if (block.type === "html") {
 			container.appendChild(renderSandboxHtml(block.payload || ""));
 		} else {
 			const fallback = document.createElement("pre");
@@ -470,45 +440,59 @@
 		messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
 
-	function renderBarChart(block) {
-		const payload = typeof block.payload === "string" ? JSON.parse(block.payload) : (block.payload || {});
-		const labels = Array.isArray(payload.labels) ? payload.labels : [];
-		const values = Array.isArray(payload.values) ? payload.values : [];
-		const maxValue = Math.max(...values, 1);
-		const chart = document.createElement("div");
-		chart.className = "bar-chart";
-
-		values.forEach((value, index) => {
-			const item = document.createElement("div");
-			item.className = "bar-chart-item";
-
-			const valueEl = document.createElement("span");
-			valueEl.className = "bar-chart-value";
-			valueEl.textContent = String(value);
-
-			const bar = document.createElement("div");
-			bar.className = "bar-chart-bar";
-			bar.style.height = `${Math.max((Number(value) / maxValue) * 140, 4)}px`;
-			bar.title = `${labels[index] || `第 ${index + 1} 项`}：${value}`;
-
-			const label = document.createElement("span");
-			label.className = "bar-chart-label";
-			label.textContent = labels[index] || `第 ${index + 1} 项`;
-
-			item.append(valueEl, bar, label);
-			chart.appendChild(item);
-		});
-		return chart;
-	}
-
 	function renderSandboxHtml(html) {
 		const frame = document.createElement("iframe");
 		frame.className = "rich-html-frame";
-		frame.setAttribute("sandbox", "");
+		frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
 		frame.setAttribute("title", "Agent 富文本内容");
+		frame.addEventListener("load", () => bindAutoResizeIframe(frame));
 		frame.srcdoc = html || "";
 		return frame;
 	}
+
+	function bindAutoResizeIframe(frame) {
+		const doc = frame.contentDocument;
+		if (!doc) {
+			return;
+		}
+
+		const resize = () => resizeSandboxIframe(frame);
+		resize();
+		requestAnimationFrame(resize);
+
+		if ("ResizeObserver" in window && doc.body) {
+			const observer = new ResizeObserver(resize);
+			observer.observe(doc.body);
+			frame._resizeObserver = observer;
+		}
+
+		doc.querySelectorAll("img").forEach(img => {
+			if (!img.complete) {
+				img.addEventListener("load", resize, {once: true});
+				img.addEventListener("error", resize, {once: true});
+			}
+		});
+	}
+
+	function resizeSandboxIframe(frame) {
+		const doc = frame.contentDocument;
+		if (!doc) {
+			return;
+		}
+
+		const height = Math.max(
+			doc.body?.scrollHeight || 0,
+			doc.body?.offsetHeight || 0,
+			doc.documentElement?.scrollHeight || 0,
+			doc.documentElement?.offsetHeight || 0
+		);
+		frame.style.height = `${Math.max(height, 120)}px`;
+		messagesEl.scrollTop = messagesEl.scrollHeight;
+	}
+
+	window.addEventListener("resize", () => {
+		document.querySelectorAll(".rich-html-frame").forEach(resizeSandboxIframe);
+	});
 </script>
 </body>
 </html>

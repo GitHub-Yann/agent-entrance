@@ -1,18 +1,14 @@
 package com.yann.agent.entrance.dto;
 
-import java.net.URI;
 import java.util.List;
 
-public record AgentInvokeRequest(
+public record TargetAgentRequestBody(
 		String agentId,
 		String tenantId,
 		String userId,
 		String conversationId,
-		String accessToken,
 		String message,
 		List<AgentAttachmentRef> attachments,
-		String correlationId,
-		String clientMessageId,
-		URI endpoint
+		String clientMessageId
 ) {
 }

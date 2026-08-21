@@ -35,7 +35,7 @@ class AgentProxyServiceTest {
 				AgentStreamChunk.delta("world")
 		));
 
-		List<String> events = service.stream(user("tenant-a"), "c-1", new StreamMessageRequest("dev-assistant", "hi", null))
+		List<String> events = service.stream(user("portal"), "c-1", new StreamMessageRequest("dev-assistant", "hi", null))
 				.map(ServerSentEvent::event)
 				.collectList()
 				.block();
@@ -47,6 +47,7 @@ class AgentProxyServiceTest {
 						MessageRole.USER + ":hi:" + MessageStatus.SUCCESS,
 						MessageRole.ASSISTANT + ":hello world:" + MessageStatus.SUCCESS
 				);
+		assertThat(conversationService.listMessages().get(1).id()).isEqualTo("c-1-1");
 		assertThat(auditService.list()).hasSize(1);
 	}
 
@@ -57,7 +58,7 @@ class AgentProxyServiceTest {
 				Flux.error(new IllegalStateException("downstream closed"))
 		));
 
-		StepVerifier.create(service.stream(user("tenant-a"), "c-1", new StreamMessageRequest("dev-assistant", "hi", null))
+		StepVerifier.create(service.stream(user("portal"), "c-1", new StreamMessageRequest("dev-assistant", "hi", null))
 						.map(ServerSentEvent::event))
 				.expectNext("message_start", "delta", "error")
 				.verifyComplete();
