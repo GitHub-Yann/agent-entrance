@@ -33,7 +33,7 @@ public class TestPageController {
 		String messageId = "mock-mixed-" + System.currentTimeMillis();
 		String prompt = request == null ? "" : request.message();
 		return Flux.interval(Duration.ofSeconds(1))
-				.take(8)
+				.take(9)
 				.index()
 				.map(step -> mixedEvent(messageId, step.getT1().intValue(), request, prompt))
 				.concatWithValues(toSse("message_end", messageEndData(messageId, request)));
@@ -58,11 +58,12 @@ public class TestPageController {
 		return switch (step) {
 			case 0 -> toSse("message_start", messageStartData(messageId, agentId, conversationId));
 			case 1 -> toSse("delta", Map.of("text", "下面先看一个 HTML 图表，再看一个富文本卡片。当前消息：" + prompt));
-			case 2 -> toSse("content_block", htmlChartBlock(request, "block-html-chart-1", "本周订单量"));
-			case 3 -> toSse("content_block", htmlBlock(request));
-			case 4 -> toSse("delta", Map.of("text", "再看一个富文本卡片。"));
-			case 5 -> toSse("content_block", htmlChartBlock(request, "block-html-chart-2", "渠道订单分布"));
-			case 6 -> toSse("content_block", htmlBlock2(request));
+			case 2 -> toSse("delta", Map.of("text", "下面先看一个 HTML 图表，再看一个富文本卡片222。当前消息：" + prompt));
+			case 3 -> toSse("content_block", htmlChartBlock(request, "block-html-chart-1", "本周订单量"));
+			case 4 -> toSse("content_block", htmlBlock2(request));
+			case 5 -> toSse("delta", Map.of("text", "再看一个富文本卡片。"));
+			case 6 -> toSse("content_block", htmlChartBlock(request, "block-html-chart-2", "渠道订单分布"));
+			case 7 -> toSse("content_block", htmlBlock(request));
 			default -> toSse("delta", Map.of("text", "最后再补一句总结：整体趋势向上。" + summarySuffix));
 		};
 	}
